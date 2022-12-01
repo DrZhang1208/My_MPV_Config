@@ -2,7 +2,7 @@
 -- License: BSD 2-Clause License
 -- Creator: Eisa AlAwadhi
 -- Project: SimpleHistory
--- Version: 1.1
+-- Version: 1.1.2
 
 local o = {
 ---------------------------USER CUSTOMIZATION SETTINGS---------------------------
@@ -11,15 +11,16 @@ local o = {
 
 	-----Script Settings----
 	auto_run_list_idle = 'recents', --Auto run the list when opening mpv and there is no video / file loaded. 'none' for disabled. Or choose between: 'all', 'recents', 'distinct', 'protocols', 'fileonly', 'titleonly', 'timeonly', 'keywords'.
+	toggle_idlescreen = false, --hides OSC idle screen message when opening and closing menu (could cause unexpected behavior if multiple scripts are triggering osc-idlescreen off)
 	resume_offset = -0.65, --change to 0 so item resumes from the exact position, or decrease the value so that it gives you a little preview before loading the resume point
 	osd_messages = true, --true is for displaying osd messages when actions occur. Change to false will disable all osd messages generated from this script
-	resume_notification = true, --true so that when a file that is played previously, a notification to resume to the previous reached time will be triggered
-	resume_notification_threshold = 2, --0 to always show a resume notification when the same video has been played previously, a value such as 5 will only show the resume notification if the last played time starts after 5% of the video and ends before completion by 5%
+	resume_option = 'notification', --'none': for disabled. 'notification': a message to resume the previous reached time will be triggered. 'force': to forcefully resume last playback based on threshold
+	resume_option_threshold = 2, --0 to always trigger the resume option when the same video has been played previously, a value such as 5 will only trigger the resume option if the last played time starts after 5% of the video and ends before completion by 5%
 	mark_history_as_chapter = false, --true is for marking the time as a chapter. false disables mark as chapter behavior.
 	invert_history_blacklist = false, --true so that blacklist becomes a whitelist, resulting in stuff such as paths / websites that are added to history_blacklist to be saved into history
 	history_blacklist=[[
 	[""]
-	]], --Paths / URLs / Websites / Files / Protocols / Extensions, that wont be added to history automatically, e.g.: ["c:\\users\\eisa01\\desktop", "c:\\temp\\naruto-01.mp4", "youtube.com", "https://dailymotion.com/", "avi", "https://www.youtube.com/watch?v=e8YBesRKq_U", ".jpeg", "magnet:", "https://", "ftp"]
+	]], --Paths / URLs / Websites / Files / Protocols / Extensions, that wont be added to history automatically, e.g.: ["c:\\users\\eisa01\\desktop", "c:\\users\\eisa01\\desktop\\*", "c:\\temp\\naruto-01.mp4", "youtube.com", "https://dailymotion.com/", "avi", "https://www.youtube.com/watch?v=e8YBesRKq_U", ".jpeg", "magnet:", "https://", "ftp"]
 	history_resume_keybind=[[
 	["ctrl+r", "ctrl+R"]
 	]], --Keybind that will be used to immediately load and resume last item when no video is playing. If video is playing it will resume to the last found position
@@ -95,7 +96,7 @@ local o = {
 	list_alignment = 7, --The alignment for the list, uses numpad positions choose from 1-9 or 0 to disable. e,g.:7 top left alignment, 8 top middle alignment, 9 top right alignment.	
 	text_time_type = 'duration', --The time type for items on the list. Select between 'duration', 'length', 'remaining'.
 	time_seperator = ' 🕒 ', --Time seperator that will be used before the time
-	list_sliced_prefix = '...\\h\\N\\N', --The text that indicates there are more items above. \\N is for new line. \\h is for hard space.
+	list_sliced_prefix = '...\\h\\N', --The text that indicates there are more items above. \\N is for new line. \\h is for hard space.
 	list_sliced_suffix = '...', --The text that indicates there are more items below.
 	quickselect_0to9_pre_text = false, --true enables pre text for showing quickselect keybinds before the list. false to disable
 	text_color = 'ffffff', --Text color for list in BGR hexadecimal
@@ -119,7 +120,7 @@ local o = {
 	header_sort_after_text = '}',--Text to be shown after sort in the header, when using %aftersort%
 	header_filter_pre_text = ' [Filter: ', --Text to be shown before filter in the header, when using %prefilter%
 	header_filter_after_text = ']', --Text to be shown after filter in the header, when using %afterfilter%
-	header_search_pre_text = '\\h\\N\\N[Search=', --Text to be shown before search in the header, when using %presearch%
+	header_search_pre_text = '\\h\\N[Search=', --Text to be shown before search in the header, when using %presearch%
 	header_search_after_text = '..]', --Text to be shown after search in the header, when using %aftersearch%
 	header_highlight_pre_text = '✅', --Text to be shown before total highlighted items of displayed list in the header
 	header_highlight_after_text = '', --Text to be shown after total highlighted items of displayed list in the header
@@ -251,6 +252,8 @@ o.previous_filter_sequence_keybind = utils.parse_json(o.previous_filter_sequence
 o.open_list_keybind = utils.parse_json(o.open_list_keybind)
 o.list_filter_jump_keybind = utils.parse_json(o.list_filter_jump_keybind)
 o.list_ignored_keybind = utils.parse_json(o.list_ignored_keybind)
+
+utils.shared_script_property_set("simplehistory-menu-open", "no")
 
 if string.lower(o.log_path) == '/:dir%mpvconf%' then
 	o.log_path = mp.find_config_file('.')
@@ -798,7 +801,7 @@ function draw_list()
 	
 	if o.header_text ~= '' then
 		osd_msg = osd_msg .. osd_header .. parse_header(o.header_text)
-		osd_msg = osd_msg .. "\\h\\N\\N" .. osd_msg_end
+		osd_msg = osd_msg .. "\\h\\N" .. osd_msg_end
 	end
 	
 	if search_active and not list_contents[1] then
@@ -856,17 +859,22 @@ function draw_list()
 		
 		for j = 1, #list_highlight_cursor do
 			if list_highlight_cursor[j] and list_highlight_cursor[j][1] == i+1 then
+				osd_color=osd_cursor
 				osd_msg = osd_msg..osd_color..esc_string(o.text_highlight_pre_text)
 			end
 		end
 		
-		osd_msg = osd_msg .. osd_color .. osd_key .. osd_index .. p
-		
+		if i + 1 == list_cursor then
+			osd_msg = osd_msg .. osd_color .. osd_key .. osd_index .. '■ ' .. p
+		else
+			osd_msg = osd_msg .. osd_color .. osd_key .. osd_index .. '□ ' .. p
+		end	
+				
 		if list_contents[#list_contents - i][osd_time_type] and tonumber(list_contents[#list_contents - i][osd_time_type]) > 0 then
 			osd_msg = osd_msg .. o.time_seperator .. format_time(list_contents[#list_contents - i][osd_time_type], o.list_time_format[3], o.list_time_format[2], o.list_time_format[1])
 		end
 		
-		osd_msg = osd_msg .. '\\h\\N\\N' .. osd_msg_end
+		osd_msg = osd_msg .. '\\h\\N' .. osd_msg_end
 		
 		if i == list_start + o.list_show_amount - 1 and not showall and not showrest then
 			osd_msg = osd_msg .. o.list_sliced_suffix
@@ -971,6 +979,8 @@ function display_list(filter, sort, action)
 	
 	if not search_active then get_page_properties(filter) else update_search_results('','') end
 	draw_list()
+	utils.shared_script_property_set("simplehistory-menu-open", "yes")
+	if o.toggle_idlescreen then mp.commandv('script-message', 'osc-idlescreen', 'yes', 'no_osd') end
 	list_drawn = true
 	if not search_active then get_list_keybinds() end
 end
@@ -1632,6 +1642,8 @@ function unbind_list_keys()
 end
 
 function list_close_and_trash_collection()
+	utils.shared_script_property_set("simplehistory-menu-open", "no")
+	if o.toggle_idlescreen then mp.commandv('script-message', 'osc-idlescreen', 'yes', 'no_osd') end
 	unbind_list_keys()
 	unbind_search_keys()
 	mp.set_osd_ass(0, 0, "")
@@ -1959,6 +1971,13 @@ function history_blacklist_check()
 		has_value(o.history_blacklist, "."..filePath:match('%.([^%.]+)$'), nil) then
 			msg.info(blacklist_msg)
 			return invertable_return[1]
+		else --1.1.2# check to add any subfolder after /* to blacklist. issue #70
+			for i=1, #o.history_blacklist do --1.1.2# loop through blacklisted items, if the blacklist ends with * and it is a match after subbing of the current filePath then log it. #and additionally if it is the exact same path then ignore it.
+				if string.lower(filePath):match(string.lower(o.history_blacklist[i])) and o.history_blacklist[i]:sub(-1,#o.history_blacklist[i]) == '*' and string.lower(o.history_blacklist[i]:sub(1,-2)) ~= string.lower(filePath):match("(.*[\\/])") then
+					msg.info(blacklist_msg)
+					return invertable_return[1]
+				end
+			end
 		end
 	elseif starts_protocol(protocols, filePath) then
 		if has_value(o.history_blacklist, filePath:match('(.-)(:)'), nil) or
@@ -1991,6 +2010,7 @@ function mark_chapter()
 	local chapters_time = {}
 	
 	get_list_contents()
+	if not list_contents or not list_contents[1] then return end
 	for i = 1, #list_contents do
 		if list_contents[i].found_path == filePath and tonumber(list_contents[i].found_time) > 0 then
 			table.insert(chapters_time, tonumber(list_contents[i].found_time))
@@ -2081,25 +2101,36 @@ function history_incognito_mode()
 	end
 end
 
-function history_resume_notification()
-	if not o.resume_notification or not o.osd_messages then return end
-	local video_time = mp.get_property_number('time-pos')
-	if video_time > 0 then return end
-	local logged_time = 0
-	local percentage = 0
-	local video_duration = mp.get_property_number('duration')
-	list_contents = read_log_table()
-	if not list_contents or not list_contents[1] then return end
-	for i = #list_contents, 1, -1 do
-		if list_contents[i].found_path == filePath and tonumber(list_contents[i].found_time) > 0 then
-			logged_time = tonumber(list_contents[i].found_time) + o.resume_offset
-			break
+function history_resume_option()
+	if o.resume_option == 'notification' or o.resume_option == 'force' then
+		local video_time = mp.get_property_number('time-pos')
+		if video_time > 0 then return end
+		local logged_time = 0
+		local percentage = 0
+		local video_duration = mp.get_property_number('duration')
+		list_contents = read_log_table()
+		if not list_contents or not list_contents[1] then return end
+		for i = #list_contents, 1, -1 do
+			if list_contents[i].found_path == filePath and tonumber(list_contents[i].found_time) > 0 then
+				logged_time = tonumber(list_contents[i].found_time) + o.resume_offset
+				break
+			end
 		end
-	end
-	if logged_time > 0 then
-		percentage = math.floor((logged_time / video_duration) * 100 + 0.5)
-		if percentage > o.resume_notification_threshold and percentage < (100-o.resume_notification_threshold) or o.resume_notification_threshold == 0 then
-			mp.osd_message('⌨ [' .. string.upper(o.history_resume_keybind[1]) .. '] Resumes To' .. o.time_seperator .. format_time(logged_time, o.osd_time_format[3], o.osd_time_format[2], o.osd_time_format[1]),3)
+		if logged_time > 0 then
+			percentage = math.floor((logged_time / video_duration) * 100 + 0.5)
+			if o.resume_option == 'notification' then
+				if percentage > o.resume_option_threshold and percentage < (100-o.resume_option_threshold) or o.resume_option_threshold == 0 then
+					mp.osd_message('⌨ [' .. string.upper(o.history_resume_keybind[1]) .. '] Resumes To' .. o.time_seperator .. format_time(logged_time, o.osd_time_format[3], o.osd_time_format[2], o.osd_time_format[1]),3)
+				end
+			elseif o.resume_option == 'force' then
+				if percentage > o.resume_option_threshold and percentage < (100-o.resume_option_threshold) or o.resume_option_threshold == 0 then
+					mp.commandv('seek', logged_time, 'absolute', 'exact')
+					if (o.osd_messages == true) then
+						mp.osd_message('Resumed To Last Played Position\n' .. o.time_seperator .. format_time(logged_time, o.osd_time_format[3], o.osd_time_format[2], o.osd_time_format[1]))
+					end
+					msg.info('Resumed to the last played position')
+				end
+			end
 		end
 	end
 end
@@ -2182,7 +2213,7 @@ mp.register_event('file-loaded', function()
 		mp.commandv('seek', seekTime, 'absolute', 'exact')
 		resume_selected = false
 	end
-	mp.add_timeout(0,history_resume_notification)
+	mp.add_timeout(0,history_resume_option)
 	mark_chapter()
 	if not incognito_mode then
 		history_fileonly_save()
@@ -2199,6 +2230,10 @@ mp.add_hook('on_unload', 50, function()
 end)
 
 mp.observe_property("idle-active", "bool", function(_, v)
+	if v then --1.1.2# if idle is triggered
+		filePath, fileTitle, fileLength = nil --1.1.2# set it back to nil if idle is triggered for better trash collection. issue #69
+	end
+
 	if v and has_value(available_filters, o.auto_run_list_idle) then
 		display_list(o.auto_run_list_idle, nil, 'hide-osd')
 	end
